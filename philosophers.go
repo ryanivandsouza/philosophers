@@ -84,7 +84,7 @@ func (philosopher *Philosopher) eat(eatingStart *chan string, eatingEnd *chan st
 	*eatingEnd <- "eating ended"
 }
 
-func (host *Host) processRequest(servingAvailable *chan string, eatingStart *chan string) {
+func (host *Host) getServingAvailability(servingAvailable *chan string, eatingStart *chan string) {
 	if host.currentServingCount < 2 {
 		host.access.Lock()
 		if host.currentServingCount < 2 {
@@ -99,7 +99,7 @@ func (host *Host) processRequest(servingAvailable *chan string, eatingStart *cha
 		host.access.Unlock()
 	}
 
-	host.processRequest(servingAvailable, eatingStart)
+	host.getServingAvailability(servingAvailable, eatingStart)
 }
 
 func (host *Host) acceptRequest(philosopher *Philosopher, requestID int) *chan string {
@@ -108,24 +108,24 @@ func (host *Host) acceptRequest(philosopher *Philosopher, requestID int) *chan s
 	servingAvailable := make(chan string)
 	requestClosure := make(chan string)
 
+	go host.getServingAvailability(&servingAvailable, &eatingStart)
+
 	go func() {
 		<-servingAvailable
 		philosopher.eat(&eatingStart, &eatingEnd)
 	}()
 
-	go func() {
-		host.processRequest(&servingAvailable, &eatingStart)
-	}()
-
-	go func() {
-		<-eatingEnd
-		host.access.Lock()
-		host.currentServingCount--
-		host.access.Unlock()
-		requestClosure <- "request closed"
-	}()
+	go host.handleEatingEnd(&eatingEnd, &requestClosure)
 
 	return &requestClosure
+}
+
+func (host *Host) handleEatingEnd(eatingEnd *chan string, requestClosure *chan string) {
+	<-*eatingEnd
+	host.access.Lock()
+	host.currentServingCount--
+	host.access.Unlock()
+	*requestClosure <- "request closed"
 }
 
 func main() {

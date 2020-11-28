@@ -16,12 +16,12 @@ type Philosopher struct {
 	id             int
 	leftChopStick  *Chopstick
 	rightChopStick *Chopstick
+	eatingEnded    chan string
 }
 
-// Host manages permissions
+// Host manages servings available
 type Host struct {
-	currentServingCount int
-	access              sync.Mutex
+	servingAvailable chan string
 }
 
 func getChopsticks(count int) []*Chopstick {
@@ -36,13 +36,13 @@ func getChopsticks(count int) []*Chopstick {
 func getPhilosophers(count int) []*Philosopher {
 	philosophers := make([]*Philosopher, count)
 	for i := 0; i < count; i++ {
-		philosophers[i] = &Philosopher{id: i}
+		philosophers[i] = &Philosopher{id: i, eatingEnded: make(chan string)}
 	}
 
 	return philosophers
 }
 
-func arrangeChopsticks(philophers []*Philosopher, chopSticks []*Chopstick, count int) {
+func setTable(philophers []*Philosopher, chopSticks []*Chopstick, count int) {
 	for i, philosopher := range philophers {
 		philosopher.leftChopStick = chopSticks[i]
 		philosopher.rightChopStick = chopSticks[(i+1)%count]
@@ -59,10 +59,8 @@ func (philosopher *Philosopher) unlockChopsticks() {
 	philosopher.rightChopStick.Unlock()
 }
 
-func (philosopher *Philosopher) eat(eatingStart *chan string, eatingEnd *chan string) {
+func (philosopher *Philosopher) eat() {
 	philosopher.lockChopsticks()
-
-	*eatingStart <- "eating started"
 
 	fmt.Println("starting to eat ", philosopher.id)
 	time.Sleep(100)
@@ -70,73 +68,53 @@ func (philosopher *Philosopher) eat(eatingStart *chan string, eatingEnd *chan st
 
 	philosopher.unlockChopsticks()
 
-	*eatingEnd <- "eating ended"
+	philosopher.eatingEnded <- "eating ended"
 }
 
-func (host *Host) getServingAvailability(servingAvailable *chan string, eatingStart *chan string) {
-	if host.currentServingCount < 2 {
-		host.access.Lock()
-		if host.currentServingCount < 2 {
-			*servingAvailable <- "serving available"
-			<-*eatingStart
-			host.currentServingCount++
-			host.access.Unlock()
-
-			return
-		}
-
-		host.access.Unlock()
-	}
-
-	host.getServingAvailability(servingAvailable, eatingStart)
-}
-
-func (host *Host) acceptRequest(philosopher *Philosopher, requestID int) *chan string {
-	eatingStart := make(chan string)
-	eatingEnd := make(chan string)
-	servingAvailable := make(chan string)
-	requestClosure := make(chan string)
-
-	go host.getServingAvailability(&servingAvailable, &eatingStart)
-
+func (host *Host) acceptRequest(philosopher *Philosopher, requestID int, wg *sync.WaitGroup) {
 	go func() {
-		<-servingAvailable
-		philosopher.eat(&eatingStart, &eatingEnd)
+		<-host.servingAvailable
+		philosopher.eat()
 	}()
 
-	go host.handleEatingEnd(&eatingEnd, &requestClosure)
-
-	return &requestClosure
+	go func() {
+		<-philosopher.eatingEnded
+		host.servingAvailable <- "serving available"
+		wg.Done()
+	}()
 }
 
-func (host *Host) handleEatingEnd(eatingEnd *chan string, requestClosure *chan string) {
-	<-*eatingEnd
-	host.access.Lock()
-	host.currentServingCount--
-	host.access.Unlock()
-	*requestClosure <- "request closed"
-}
+// MaxConcurrentServings specifies maximum number of servings allowed at time
+var MaxConcurrentServings = 2
+
+// MaxNumberOfServingsPerPerson specifies maximum number of servings per person
+var MaxNumberOfServingsPerPerson = 3
+
+// PhilosopherCount specifies number of philosophers. Must be greater than 1 (>1)
+var PhilosopherCount = 5
 
 func main() {
-	count := 5
-	servingCount := 3
-	chopsticks := getChopsticks(count)
-	philosophers := getPhilosophers(count)
-	host := new(Host)
-	arrangeChopsticks(philosophers, chopsticks, count)
+	philosophers := getPhilosophers(PhilosopherCount)
+	chopsticks := getChopsticks(PhilosopherCount)
+	setTable(philosophers, chopsticks, PhilosopherCount)
 
-	requestClosures := []*chan string{}
+	host := &Host{servingAvailable: make(chan string, MaxConcurrentServings)}
 
-	for _, ph := range philosophers {
-		for i := 0; i < servingCount; i++ {
-			requestClosure := host.acceptRequest(ph, ph.id*3+i)
-			requestClosures = append(requestClosures, requestClosure)
+	go func() {
+		host.servingAvailable <- "serving available"
+		host.servingAvailable <- "serving available"
+	}()
+
+	var wg sync.WaitGroup
+
+	for i := 0; i < MaxNumberOfServingsPerPerson; i++ {
+		for _, ph := range philosophers {
+			wg.Add(1)
+			go host.acceptRequest(ph, ph.id*3+i, &wg)
 		}
 	}
 
-	for _, rc := range requestClosures {
-		<-*rc
-	}
+	wg.Wait()
 
 	fmt.Println("all done eating!")
 }

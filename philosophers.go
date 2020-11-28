@@ -8,8 +8,7 @@ import (
 
 // Chopstick represents a chopstick
 type Chopstick struct {
-	id     int
-	access sync.Mutex
+	sync.Mutex
 }
 
 // Philosopher represents a philosopher
@@ -28,7 +27,7 @@ type Host struct {
 func getChopsticks(count int) []*Chopstick {
 	chopsticks := make([]*Chopstick, count)
 	for i := 0; i < count; i++ {
-		chopsticks[i] = &Chopstick{id: i}
+		chopsticks[i] = &Chopstick{}
 	}
 
 	return chopsticks
@@ -48,16 +47,6 @@ func arrangeChopsticks(philophers []*Philosopher, chopSticks []*Chopstick, count
 		philosopher.leftChopStick = chopSticks[i]
 		philosopher.rightChopStick = chopSticks[(i+1)%count]
 	}
-}
-
-// Lock locks access to the chopstick
-func (c *Chopstick) Lock() {
-	c.access.Lock()
-}
-
-// Unlock unlocks access to the chopstick
-func (c *Chopstick) Unlock() {
-	c.access.Unlock()
 }
 
 func (philosopher *Philosopher) lockChopsticks() {
